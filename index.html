@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Captura de velocidade — MVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg:#101216; --surface:#191C22; --surface2:#21252E; --border:#2C313B;
+    --text:#E8EAED; --muted:#9BA1AD; --amber:#FFB627; --mint:#3DDC97; --danger:#FF5C5C;
+    --r:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:"Sora",system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+  body{max-width:560px;margin:0 auto;padding:16px 16px 48px}
+  h1{font-size:15px;font-weight:600;letter-spacing:.2px;margin:0}
+  .eyebrow{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin:0 0 2px}
+  header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;margin-right:6px;vertical-align:middle}
+  .dot.on{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+  .pill{font-size:11px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:4px 10px}
+
+  .readout{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:14px;position:relative;overflow:hidden}
+  .readout .label{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase}
+  .value{font-family:"JetBrains Mono",monospace;font-weight:700;font-size:64px;line-height:1;color:var(--amber);margin-top:6px;transition:opacity .15s}
+  .value.stale{opacity:.35}
+  .value .unit{font-size:18px;color:var(--muted);font-weight:500;margin-left:8px}
+  .scan{position:absolute;left:0;bottom:0;height:2px;width:100%;background:linear-gradient(90deg,transparent,var(--amber),transparent);opacity:0;transition:opacity .1s}
+  .scan.active{opacity:.9}
+  .raw{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted);margin-top:8px}
+
+  .stage{position:relative;background:#000;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;aspect-ratio:3/4;display:flex;align-items:center;justify-content:center}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  #overlay{position:absolute;inset:0;touch-action:none;cursor:crosshair}
+  .stage .hint{position:absolute;color:var(--muted);font-size:13px;text-align:center;padding:0 24px;pointer-events:none}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+  button{font-family:inherit;font-size:14px;font-weight:500;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:13px 14px;cursor:pointer;transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--muted)}
+  button:active{background:var(--surface)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--amber);color:#1a1206;border-color:var(--amber);font-weight:600}
+  button.primary:hover{filter:brightness(1.05)}
+  button.full{grid-column:1 / -1}
+  button:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:12px}
+  .panel summary{cursor:pointer;font-size:13px;font-weight:500;list-style:none;display:flex;align-items:center;justify-content:space-between}
+  .panel summary::-webkit-details-marker{display:none}
+  .panel summary .chev{color:var(--muted);font-size:12px}
+  .panel[open] summary{margin-bottom:12px}
+  .row{display:flex;align-items:center;gap:10px;margin:10px 0;font-size:13px;color:var(--muted)}
+  .row label{flex:0 0 auto}
+  input[type=text]{flex:1;min-width:0;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
+  input[type=text]:focus{outline:none;border-color:var(--mint)}
+  input[type=range]{flex:1;accent-color:var(--amber)}
+  .switch{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .switch input{appearance:none;width:38px;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;position:relative;cursor:pointer;transition:background .15s}
+  .switch input:checked{background:var(--amber)}
+  .switch input::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
+  .switch input:checked::after{transform:translateX(16px)}
+
+  .preview{display:flex;align-items:center;gap:12px;margin-top:8px}
+  .preview canvas{background:#000;border:1px solid var(--border);border-radius:8px;height:54px;width:auto;max-width:160px;image-rendering:pixelated}
+  .preview .meta{font-size:12px;color:var(--muted);line-height:1.6}
+  .preview .meta b{color:var(--text);font-weight:600}
+
+  .log{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;height:88px;overflow-y:auto;white-space:pre-wrap;line-height:1.5}
+  .note{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px}
+  a{color:var(--mint)}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <p class="eyebrow">Corrida online · MVP</p>
+    <h1>Captura de velocidade</h1>
+  </div>
+  <span class="pill"><span id="camDot" class="dot"></span>câmera</span>
+</header>
+
+<div class="readout">
+  <div class="label">Velocidade lida</div>
+  <div id="value" class="value stale">--<span class="unit">km/h</span></div>
+  <div id="raw" class="raw">leitura bruta: —</div>
+  <div id="scan" class="scan"></div>
+</div>
+
+<div class="stage" id="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="hint" id="hint">Toque em “Ligar câmera” e aponte para o display da bike. Depois arraste sobre o número da velocidade para marcar a área de leitura.</div>
+</div>
+
+<div class="grid">
+  <button id="btnCam" class="primary">Ligar câmera</button>
+  <button id="btnRead" disabled>Iniciar leitura</button>
+  <button id="btnReset" class="full" disabled>Limpar área marcada</button>
+</div>
+
+<details class="panel" open>
+  <summary>Ajuste da leitura <span class="chev">⌄</span></summary>
+  <div class="preview">
+    <canvas id="proc" width="160" height="54"></canvas>
+    <div class="meta">
+      O que o OCR enxerga<br>
+      confiança: <b id="conf">—</b><br>
+      ritmo: <b id="fps">—</b>
+    </div>
+  </div>
+  <div class="row">
+    <label class="switch"><input type="checkbox" id="invert"> Inverter (display claro no escuro)</label>
+  </div>
+  <div class="row">
+    <label>Limiar</label>
+    <input type="range" id="thresh" min="0" max="255" value="128">
+    <span id="threshVal" style="font-family:'JetBrains Mono';color:var(--text)">auto</span>
+  </div>
+  <div class="row">
+    <label>Vel. máx. plausível</label>
+    <input type="range" id="maxv" min="20" max="120" value="80">
+    <span id="maxvVal" style="font-family:'JetBrains Mono';color:var(--text)">80</span>
+  </div>
+</details>
+
+<details class="panel">
+  <summary>Enviar para o jogo (WebSocket) <span class="chev">⌄</span></summary>
+  <div class="row">
+    <input type="text" id="wsUrl" placeholder="ws://192.168.0.10:8080" value="ws://localhost:8080">
+  </div>
+  <div class="grid" style="margin:8px 0 0">
+    <button id="btnWs">Conectar</button>
+    <button id="btnWsTest" disabled>Enviar teste</button>
+  </div>
+  <div class="row" style="margin-top:12px"><span id="wsDot" class="dot"></span><span id="wsStatus">desconectado</span></div>
+</details>
+
+<details class="panel">
+  <summary>Registro <span class="chev">⌄</span></summary>
+  <div id="log" class="log"></div>
+</details>
+
+<p class="note">A câmera só funciona em conexão segura (HTTPS) ou em <code>localhost</code>. Para testar no celular, hospede este arquivo num serviço estático grátis (GitHub Pages, Netlify Drop, Vercel) e abra o link pelo celular.</p>
+
+<script>
+const $ = id => document.getElementById(id);
+const video=$('video'), overlay=$('overlay'), octx=overlay.getContext('2d');
+const cap=document.createElement('canvas'), cctx=cap.getContext('2d',{willReadFrequently:true});
+const proc=$('proc'), pctx=proc.getContext('2d',{willReadFrequently:true});
+
+let stream=null, worker=null, reading=false, roi=null, drag=null;
+let lastCycle=performance.now(), ws=null, lastGood=null;
+
+function log(msg){
+  const el=$('log'); const t=new Date().toLocaleTimeString('pt-BR');
+  el.textContent=`[${t}] ${msg}\n`+el.textContent; 
+}
+
+/* ---------- câmera ---------- */
+async function toggleCam(){
+  if(stream){ stopCam(); return; }
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    video.srcObject=stream; await video.play();
+    $('hint').style.display='none';
+    $('camDot').classList.add('on'); $('btnCam').textContent='Desligar câmera';
+    $('btnRead').disabled=false; $('btnReset').disabled=false;
+    syncOverlay();
+    log('câmera ligada ('+video.videoWidth+'×'+video.videoHeight+')');
+  }catch(e){
+    log('erro na câmera: '+e.message);
+    alert('Não consegui acessar a câmera.\n\n'+e.message+'\n\nVerifique se está em HTTPS/localhost e se concedeu a permissão.');
+  }
+}
+function stopCam(){
+  stopRead();
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  video.srcObject=null; $('camDot').classList.remove('on');
+  $('btnCam').textContent='Ligar câmera'; $('btnRead').disabled=true; $('btnReset').disabled=true;
+  $('hint').style.display='block'; octx.clearRect(0,0,overlay.width,overlay.height);
+  log('câmera desligada');
+}
+function syncOverlay(){
+  const r=$('stage').getBoundingClientRect();
+  overlay.width=r.width; overlay.height=r.height; drawROI();
+}
+window.addEventListener('resize',()=>{if(stream)syncOverlay();});
+
+/* ---------- seleção da área (ROI) ---------- */
+function pos(e){const r=overlay.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};}
+overlay.addEventListener('pointerdown',e=>{if(!stream)return;overlay.setPointerCapture(e.pointerId);drag={s:pos(e),e:pos(e)};});
+overlay.addEventListener('pointermove',e=>{if(!drag)return;drag.e=pos(e);roi=norm(drag.s,drag.e);drawROI();});
+overlay.addEventListener('pointerup',()=>{if(drag&&roi&&(roi.w<.02||roi.h<.02))roi=null;drag=null;drawROI();});
+function norm(a,b){const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);return{x,y,w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)};}
+function drawROI(){
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  if(!roi)return;
+  const x=roi.x*overlay.width,y=roi.y*overlay.height,w=roi.w*overlay.width,h=roi.h*overlay.height;
+  octx.fillStyle='rgba(0,0,0,.45)';
+  octx.fillRect(0,0,overlay.width,y);octx.fillRect(0,y+h,overlay.width,overlay.height-y-h);
+  octx.fillRect(0,y,x,h);octx.fillRect(x+w,y,overlay.width-x-w,h);
+  octx.strokeStyle='#FFB627';octx.lineWidth=2;octx.strokeRect(x,y,w,h);
+}
+$('btnReset').onclick=()=>{roi=null;drawROI();log('área de leitura limpa');};
+
+/* ---------- OCR ---------- */
+async function toggleRead(){
+  if(reading){stopRead();return;}
+  if(!roi){alert('Marque primeiro a área do número arrastando sobre o display.');return;}
+  if(!worker){
+    $('btnRead').textContent='Carregando OCR…'; $('btnRead').disabled=true;
+    log('carregando motor de OCR…');
+    worker=await Tesseract.createWorker('eng');
+    await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:'7'});
+    log('OCR pronto'); $('btnRead').disabled=false;
+  }
+  reading=true; $('btnRead').textContent='Parar leitura'; $('btnRead').classList.add('primary');
+  loop();
+}
+function stopRead(){
+  reading=false; $('btnRead').textContent='Iniciar leitura'; $('btnRead').classList.remove('primary');
+  $('value').classList.add('stale');
+}
+
+function preprocess(){
+  const vw=video.videoWidth,vh=video.videoHeight;
+  cap.width=vw;cap.height=vh;cctx.drawImage(video,0,0);
+  const rx=roi.x*vw,ry=roi.y*vh,rw=roi.w*vw,rh=roi.h*vh;
+  const targetH=64, scale=targetH/rh, pw=Math.max(32,Math.round(rw*scale));
+  proc.width=pw;proc.height=targetH;
+  pctx.imageSmoothingEnabled=true;
+  pctx.drawImage(cap,rx,ry,rw,rh,0,0,pw,targetH);
+  const img=pctx.getImageData(0,0,pw,targetH),d=img.data;
+  // grayscale
+  const gray=new Uint8ClampedArray(pw*targetH);
+  for(let i=0,j=0;i<d.length;i+=4,j++)gray[j]=(d[i]*.299+d[i+1]*.587+d[i+2]*.114)|0;
+  // threshold (auto = Otsu, ou manual via slider)
+  let th=+$('thresh').value, manual=$('threshVal').textContent!=='auto';
+  if(!manual)th=otsu(gray);
+  const inv=$('invert').checked;
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    let on=gray[j]>th; if(inv)on=!on;
+    const v=on?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
+  }
+  pctx.putImageData(img,0,0);
+  return proc;
+}
+function otsu(g){
+  const h=new Array(256).fill(0);for(const v of g)h[v]++;
+  const total=g.length;let sum=0;for(let i=0;i<256;i++)sum+=i*h[i];
+  let sumB=0,wB=0,max=0,th=128;
+  for(let i=0;i<256;i++){wB+=h[i];if(!wB)continue;const wF=total-wB;if(!wF)break;
+    sumB+=i*h[i];const mB=sumB/wB,mF=(sum-sumB)/wF,between=wB*wF*(mB-mF)*(mB-mF);
+    if(between>max){max=between;th=i;}}
+  return th;
+}
+
+async function loop(){
+  while(reading){
+    try{
+      const canvas=preprocess();
+      $('scan').classList.add('active');
+      const {data}=await worker.recognize(canvas);
+      $('scan').classList.remove('active');
+      handleResult(data.text,data.confidence);
+    }catch(e){log('falha na leitura: '+e.message);}
+    const now=performance.now(),dt=now-lastCycle;lastCycle=now;
+    $('fps').textContent=(1000/dt).toFixed(1)+'/s';
+    await new Promise(r=>setTimeout(r,120)); // respira entre leituras
+  }
+}
+
+function handleResult(text,conf){
+  const raw=(text||'').trim().replace(/\s+/g,'');
+  $('raw').textContent='leitura bruta: '+(raw||'—');
+  $('conf').textContent=conf?Math.round(conf)+'%':'—';
+  let clean=raw.replace(/[^0-9.]/g,''); const parts=clean.split('.');
+  if(parts.length>2)clean=parts[0]+'.'+parts.slice(1).join('');
+  const val=parseFloat(clean);
+  const maxv=+$('maxv').value, ok=!isNaN(val)&&val>=0&&val<=maxv&&conf>=40;
+  if(ok){
+    lastGood=val;
+    $('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';
+    $('value').classList.remove('stale');
+    send(val);
+  }else{
+    $('value').classList.add('stale');
+  }
+}
+
+/* ---------- WebSocket ---------- */
+function toggleWs(){
+  if(ws){ws.close();return;}
+  const url=$('wsUrl').value.trim();
+  if(!url){alert('Informe o endereço do servidor (ws://…)');return;}
+  try{
+    ws=new WebSocket(url);
+    $('wsStatus').textContent='conectando…';
+    ws.onopen=()=>{$('wsDot').classList.add('on');$('wsStatus').textContent='conectado';$('btnWs').textContent='Desconectar';$('btnWsTest').disabled=false;log('WS conectado a '+url);};
+    ws.onclose=()=>{$('wsDot').classList.remove('on');$('wsStatus').textContent='desconectado';$('btnWs').textContent='Conectar';$('btnWsTest').disabled=true;ws=null;log('WS desconectado');};
+    ws.onerror=()=>{log('WS: erro de conexão');};
+  }catch(e){alert('Endereço inválido: '+e.message);}
+}
+function send(v){
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'speed',value:v,unit:'kmh',ts:Date.now()}));
+}
+$('btnWsTest').onclick=()=>{const v=lastGood??15;send(v);log('teste enviado: '+v+' km/h');};
+
+/* ---------- controles dos sliders ---------- */
+$('thresh').oninput=e=>$('threshVal').textContent=e.target.value;
+$('thresh').addEventListener('dblclick',()=>$('threshVal').textContent='auto');
+$('maxv').oninput=e=>$('maxvVal').textContent=e.target.value;
+
+$('btnCam').onclick=toggleCam;
+$('btnRead').onclick=toggleRead;
+$('btnWs').onclick=toggleWs;
+log('pronto. ligue a câmera para começar.');
+</script>
+</body>
+</html>
