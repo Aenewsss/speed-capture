@@ -120,7 +120,7 @@
     <div class="meta">
       O que o leitor enxerga<br>
       confiança: <b id="conf">—</b><br>
-      ritmo: <b id="fps">—</b>
+      leituras/s: <b id="fps">—</b>
     </div>
   </div>
   <div class="row">
@@ -334,17 +334,12 @@ function handleResult(text,conf){
   let clean=raw.replace(/[^0-9.]/g,'');const parts=clean.split('.');
   if(parts.length>2)clean=parts[0]+'.'+parts.slice(1).join('');
   const val=parseFloat(clean),maxv=+$('maxv').value;
-  const plausible=!isNaN(val)&&val>=0&&val<=maxv&&conf>=50;
-  // estabilização: confirma se repetiu na última leitura
-  hist.push(plausible?val:null);if(hist.length>3)hist.shift();
-  const stable=plausible&&hist.filter(v=>v!==null&&Math.abs(v-val)<0.15).length>=2;
-  if(stable){
-    lastGood=val;$('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';$('value').classList.remove('stale');send(val);
-  }else if(plausible){
-    $('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';$('value').classList.add('stale');
-  }else{
-    $('value').classList.add('stale');
-  }
+  const numeric=!isNaN(val)&&val>=0&&val<=maxv;
+  if(!numeric){$('value').classList.add('stale');return;}
+  $('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>'; // mostra sempre a leitura atual
+  const confident=conf>=50;
+  $('value').classList.toggle('stale',!confident); // aceso = confiável, apagado = duvidoso
+  if(confident){lastGood=val;send(val);} // envia ao jogo só quando confiável
 }
 
 /* ---------- WebSocket ---------- */
