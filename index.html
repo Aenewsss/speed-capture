@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   :root{
     --bg:#101216; --surface:#191C22; --surface2:#21252E; --border:#2C313B;
@@ -138,8 +139,20 @@
   </div>
 </details>
 
+<details class="panel" open>
+  <summary>Enviar para o jogo (P2P, sem servidor) <span class="chev">⌄</span></summary>
+  <div class="row">
+    <input type="text" id="gameCode" placeholder="código de 6 letras do jogo" maxlength="6" style="text-transform:uppercase;letter-spacing:3px">
+  </div>
+  <div class="grid" style="margin:8px 0 0">
+    <button id="btnP2P">Conectar ao jogo</button>
+    <button id="btnP2PTest" disabled>Enviar teste</button>
+  </div>
+  <div class="row" style="margin-top:12px"><span id="p2pDot" class="dot"></span><span id="p2pStatus">desconectado</span></div>
+</details>
+
 <details class="panel">
-  <summary>Enviar para o jogo (WebSocket) <span class="chev">⌄</span></summary>
+  <summary>Enviar via servidor (WebSocket) — avançado <span class="chev">⌄</span></summary>
   <div class="row">
     <input type="text" id="wsUrl" placeholder="ws://192.168.0.10:8080" value="ws://localhost:8080">
   </div>
@@ -164,7 +177,7 @@ const cap=document.createElement('canvas'), cctx=cap.getContext('2d',{willReadFr
 const proc=$('proc'), pctx=proc.getContext('2d',{willReadFrequently:true});
 
 let stream=null, worker=null, reading=false, roi=null, drag=null;
-let lastCycle=performance.now(), ws=null, lastGood=null, engine='seg', hist=[];
+let lastCycle=performance.now(), ws=null, lastGood=null, engine='seg', hist=[], gpeer=null, gconn=null;
 
 function log(msg){const el=$('log');const t=new Date().toLocaleTimeString('pt-BR');el.textContent=`[${t}] ${msg}\n`+el.textContent;}
 
@@ -342,6 +355,27 @@ function handleResult(text,conf){
   if(confident){lastGood=val;send(val);} // envia ao jogo só quando confiável
 }
 
+/* ---------- P2P (WebRTC via PeerJS) ---------- */
+function p2pSet(txt,on){$('p2pStatus').textContent=txt;$('p2pDot').classList.toggle('on',!!on);}
+function p2pConnect(){
+  if(gconn){gconn.close();return;}
+  const code=$('gameCode').value.trim().toUpperCase();
+  if(code.length<4){alert('Digite o código de 6 letras que aparece na tela do jogo.');return;}
+  const target='bk-'+code.toLowerCase();
+  if(!gpeer)gpeer=new Peer();
+  const doConn=()=>{
+    p2pSet('conectando…',false);
+    gconn=gpeer.connect(target,{reliable:false});
+    gconn.on('open',()=>{p2pSet('conectado',true);$('btnP2P').textContent='Desconectar';$('btnP2PTest').disabled=false;log('P2P conectado ao jogo '+code);});
+    gconn.on('close',()=>{p2pSet('desconectado',false);$('btnP2P').textContent='Conectar ao jogo';$('btnP2PTest').disabled=true;gconn=null;log('P2P desconectado');});
+    gconn.on('error',()=>log('P2P: erro na conexão'));
+  };
+  if(gpeer.open)doConn();else gpeer.on('open',doConn);
+  gpeer.on('error',e=>{p2pSet('erro: '+e.type,false);log('P2P erro: '+e.type);});
+}
+function p2pSend(v){if(gconn&&gconn.open)gconn.send({type:'speed',value:v,unit:'kmh',ts:Date.now()});}
+$('btnP2PTest').onclick=()=>{const v=lastGood??15;p2pSend(v);log('teste P2P enviado: '+v+' km/h');};
+
 /* ---------- WebSocket ---------- */
 function toggleWs(){
   if(ws){ws.close();return;}
@@ -353,7 +387,7 @@ function toggleWs(){
     ws.onerror=()=>log('WS: erro de conexão');
   }catch(e){alert('Endereço inválido: '+e.message);}
 }
-function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'speed',value:v,unit:'kmh',ts:Date.now()}));}
+function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'speed',value:v,unit:'kmh',ts:Date.now()}));p2pSend(v);}
 $('btnWsTest').onclick=()=>{const v=lastGood??15;send(v);log('teste enviado: '+v+' km/h');};
 
 /* ---------- controles ---------- */
@@ -363,7 +397,7 @@ $('engTess').onclick=()=>setEngine('tess');
 $('thresh').oninput=e=>$('threshVal').textContent=e.target.value;
 $('thresh').addEventListener('dblclick',()=>$('threshVal').textContent='auto');
 $('maxv').oninput=e=>$('maxvVal').textContent=e.target.value;
-$('btnCam').onclick=toggleCam;$('btnRead').onclick=toggleRead;$('btnWs').onclick=toggleWs;
+$('btnCam').onclick=toggleCam;$('btnRead').onclick=toggleRead;$('btnWs').onclick=toggleWs;$('btnP2P').onclick=p2pConnect;
 log('pronto. ligue a câmera para começar.');
 </script>
 </body>
