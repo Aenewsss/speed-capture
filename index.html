@@ -58,19 +58,26 @@
   input[type=text]{flex:1;min-width:0;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px}
   input[type=text]:focus{outline:none;border-color:var(--mint)}
   input[type=range]{flex:1;accent-color:var(--amber)}
+
+  .seg{display:flex;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:14px}
+  .segbtn{flex:1;padding:9px;font-size:13px;border:none;background:transparent;border-radius:7px;color:var(--muted)}
+  .segbtn.active{background:var(--surface2);color:var(--text);font-weight:600}
+  .segbtn:hover{border:none}
+
   .switch{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
-  .switch input{appearance:none;width:38px;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;position:relative;cursor:pointer;transition:background .15s}
+  .switch input{appearance:none;width:38px;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:999px;position:relative;cursor:pointer;transition:background .15s;flex:0 0 auto}
   .switch input:checked{background:var(--amber)}
   .switch input::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
   .switch input:checked::after{transform:translateX(16px)}
 
   .preview{display:flex;align-items:center;gap:12px;margin-top:8px}
-  .preview canvas{background:#000;border:1px solid var(--border);border-radius:8px;height:54px;width:auto;max-width:160px;image-rendering:pixelated}
+  .preview canvas{background:#000;border:1px solid var(--border);border-radius:8px;height:60px;width:auto;max-width:170px;image-rendering:pixelated}
   .preview .meta{font-size:12px;color:var(--muted);line-height:1.6}
   .preview .meta b{color:var(--text);font-weight:600}
 
   .log{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;height:88px;overflow-y:auto;white-space:pre-wrap;line-height:1.5}
   .note{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px}
+  code{font-family:"JetBrains Mono",monospace;color:var(--text)}
   a{color:var(--mint)}
 </style>
 </head>
@@ -93,7 +100,7 @@
 <div class="stage" id="stage">
   <video id="video" playsinline muted></video>
   <canvas id="overlay"></canvas>
-  <div class="hint" id="hint">Toque em “Ligar câmera” e aponte para o display da bike. Depois arraste sobre o número da velocidade para marcar a área de leitura.</div>
+  <div class="hint" id="hint">Toque em “Ligar câmera” e aponte para o display. Depois arraste só sobre os dígitos da velocidade (sem o “KM”) para marcar a área.</div>
 </div>
 
 <div class="grid">
@@ -104,16 +111,20 @@
 
 <details class="panel" open>
   <summary>Ajuste da leitura <span class="chev">⌄</span></summary>
+  <div class="seg">
+    <button id="engSeg" class="segbtn active">7 segmentos (LCD)</button>
+    <button id="engTess" class="segbtn">Texto geral</button>
+  </div>
   <div class="preview">
-    <canvas id="proc" width="160" height="54"></canvas>
+    <canvas id="proc" width="170" height="60"></canvas>
     <div class="meta">
-      O que o OCR enxerga<br>
+      O que o leitor enxerga<br>
       confiança: <b id="conf">—</b><br>
       ritmo: <b id="fps">—</b>
     </div>
   </div>
   <div class="row">
-    <label class="switch"><input type="checkbox" id="invert"> Inverter (display claro no escuro)</label>
+    <label class="switch"><input type="checkbox" id="invert" checked> Dígitos escuros no fundo claro</label>
   </div>
   <div class="row">
     <label>Limiar</label>
@@ -153,23 +164,18 @@ const cap=document.createElement('canvas'), cctx=cap.getContext('2d',{willReadFr
 const proc=$('proc'), pctx=proc.getContext('2d',{willReadFrequently:true});
 
 let stream=null, worker=null, reading=false, roi=null, drag=null;
-let lastCycle=performance.now(), ws=null, lastGood=null;
+let lastCycle=performance.now(), ws=null, lastGood=null, engine='seg', hist=[];
 
-function log(msg){
-  const el=$('log'); const t=new Date().toLocaleTimeString('pt-BR');
-  el.textContent=`[${t}] ${msg}\n`+el.textContent; 
-}
+function log(msg){const el=$('log');const t=new Date().toLocaleTimeString('pt-BR');el.textContent=`[${t}] ${msg}\n`+el.textContent;}
 
 /* ---------- câmera ---------- */
 async function toggleCam(){
-  if(stream){ stopCam(); return; }
+  if(stream){stopCam();return;}
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-    video.srcObject=stream; await video.play();
-    $('hint').style.display='none';
-    $('camDot').classList.add('on'); $('btnCam').textContent='Desligar câmera';
-    $('btnRead').disabled=false; $('btnReset').disabled=false;
-    syncOverlay();
+    video.srcObject=stream;await video.play();
+    $('hint').style.display='none';$('camDot').classList.add('on');$('btnCam').textContent='Desligar câmera';
+    $('btnRead').disabled=false;$('btnReset').disabled=false;syncOverlay();
     log('câmera ligada ('+video.videoWidth+'×'+video.videoHeight+')');
   }catch(e){
     log('erro na câmera: '+e.message);
@@ -179,26 +185,21 @@ async function toggleCam(){
 function stopCam(){
   stopRead();
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-  video.srcObject=null; $('camDot').classList.remove('on');
-  $('btnCam').textContent='Ligar câmera'; $('btnRead').disabled=true; $('btnReset').disabled=true;
-  $('hint').style.display='block'; octx.clearRect(0,0,overlay.width,overlay.height);
-  log('câmera desligada');
+  video.srcObject=null;$('camDot').classList.remove('on');
+  $('btnCam').textContent='Ligar câmera';$('btnRead').disabled=true;$('btnReset').disabled=true;
+  $('hint').style.display='block';octx.clearRect(0,0,overlay.width,overlay.height);log('câmera desligada');
 }
-function syncOverlay(){
-  const r=$('stage').getBoundingClientRect();
-  overlay.width=r.width; overlay.height=r.height; drawROI();
-}
+function syncOverlay(){const r=$('stage').getBoundingClientRect();overlay.width=r.width;overlay.height=r.height;drawROI();}
 window.addEventListener('resize',()=>{if(stream)syncOverlay();});
 
-/* ---------- seleção da área (ROI) ---------- */
+/* ---------- seleção da área ---------- */
 function pos(e){const r=overlay.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};}
 overlay.addEventListener('pointerdown',e=>{if(!stream)return;overlay.setPointerCapture(e.pointerId);drag={s:pos(e),e:pos(e)};});
 overlay.addEventListener('pointermove',e=>{if(!drag)return;drag.e=pos(e);roi=norm(drag.s,drag.e);drawROI();});
 overlay.addEventListener('pointerup',()=>{if(drag&&roi&&(roi.w<.02||roi.h<.02))roi=null;drag=null;drawROI();});
 function norm(a,b){const x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);return{x,y,w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)};}
 function drawROI(){
-  octx.clearRect(0,0,overlay.width,overlay.height);
-  if(!roi)return;
+  octx.clearRect(0,0,overlay.width,overlay.height);if(!roi)return;
   const x=roi.x*overlay.width,y=roi.y*overlay.height,w=roi.w*overlay.width,h=roi.h*overlay.height;
   octx.fillStyle='rgba(0,0,0,.45)';
   octx.fillRect(0,0,overlay.width,y);octx.fillRect(0,y+h,overlay.width,overlay.height-y-h);
@@ -207,70 +208,122 @@ function drawROI(){
 }
 $('btnReset').onclick=()=>{roi=null;drawROI();log('área de leitura limpa');};
 
-/* ---------- OCR ---------- */
-async function toggleRead(){
-  if(reading){stopRead();return;}
-  if(!roi){alert('Marque primeiro a área do número arrastando sobre o display.');return;}
-  if(!worker){
-    $('btnRead').textContent='Carregando OCR…'; $('btnRead').disabled=true;
-    log('carregando motor de OCR…');
-    worker=await Tesseract.createWorker('eng');
-    await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:'7'});
-    log('OCR pronto'); $('btnRead').disabled=false;
-  }
-  reading=true; $('btnRead').textContent='Parar leitura'; $('btnRead').classList.add('primary');
-  loop();
-}
-function stopRead(){
-  reading=false; $('btnRead').textContent='Iniciar leitura'; $('btnRead').classList.remove('primary');
-  $('value').classList.add('stale');
-}
-
-function preprocess(){
+/* ---------- pré-processamento -> máscara binária ---------- */
+function buildMask(){
   const vw=video.videoWidth,vh=video.videoHeight;
   cap.width=vw;cap.height=vh;cctx.drawImage(video,0,0);
   const rx=roi.x*vw,ry=roi.y*vh,rw=roi.w*vw,rh=roi.h*vh;
-  const targetH=64, scale=targetH/rh, pw=Math.max(32,Math.round(rw*scale));
-  proc.width=pw;proc.height=targetH;
-  pctx.imageSmoothingEnabled=true;
-  pctx.drawImage(cap,rx,ry,rw,rh,0,0,pw,targetH);
-  const img=pctx.getImageData(0,0,pw,targetH),d=img.data;
-  // grayscale
-  const gray=new Uint8ClampedArray(pw*targetH);
+  const H=72,scale=H/rh,W=Math.max(24,Math.round(rw*scale));
+  const tmp=document.createElement('canvas');tmp.width=W;tmp.height=H;
+  const tctx=tmp.getContext('2d',{willReadFrequently:true});
+  tctx.imageSmoothingEnabled=true;tctx.drawImage(cap,rx,ry,rw,rh,0,0,W,H);
+  const img=tctx.getImageData(0,0,W,H),d=img.data,gray=new Uint8ClampedArray(W*H);
   for(let i=0,j=0;i<d.length;i+=4,j++)gray[j]=(d[i]*.299+d[i+1]*.587+d[i+2]*.114)|0;
-  // threshold (auto = Otsu, ou manual via slider)
-  let th=+$('thresh').value, manual=$('threshVal').textContent!=='auto';
-  if(!manual)th=otsu(gray);
-  const inv=$('invert').checked;
-  for(let i=0,j=0;i<d.length;i+=4,j++){
-    let on=gray[j]>th; if(inv)on=!on;
-    const v=on?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
-  }
-  pctx.putImageData(img,0,0);
-  return proc;
+  let th=+$('thresh').value;if($('threshVal').textContent==='auto')th=otsu(gray);
+  const darkDigits=$('invert').checked; // dígitos escuros => fg = gray < th
+  const mask=new Uint8Array(W*H);
+  for(let j=0;j<gray.length;j++){const on=darkDigits?gray[j]<th:gray[j]>th;mask[j]=on?1:0;}
+  return {mask,W,H};
 }
 function otsu(g){
   const h=new Array(256).fill(0);for(const v of g)h[v]++;
   const total=g.length;let sum=0;for(let i=0;i<256;i++)sum+=i*h[i];
   let sumB=0,wB=0,max=0,th=128;
   for(let i=0;i<256;i++){wB+=h[i];if(!wB)continue;const wF=total-wB;if(!wF)break;
-    sumB+=i*h[i];const mB=sumB/wB,mF=(sum-sumB)/wF,between=wB*wF*(mB-mF)*(mB-mF);
-    if(between>max){max=between;th=i;}}
+    sumB+=i*h[i];const mB=sumB/wB,mF=(sum-sumB)/wF,b=wB*wF*(mB-mF)*(mB-mF);if(b>max){max=b;th=i;}}
   return th;
 }
 
+/* ---------- decodificador de 7 segmentos ---------- */
+const SEG={'1111110':'0','0110000':'1','1101101':'2','1111001':'3','0110011':'4','1011011':'5','1011111':'6','1110000':'7','1111111':'8','1111011':'9'};
+function frac(mask,W,H,x0,y0,bw,bh){let on=0,tot=0;for(let y=y0;y<y0+bh;y++){if(y<0||y>=H)continue;for(let x=x0;x<x0+bw;x++){if(x<0||x>=W)continue;tot++;if(mask[y*W+x])on++;}}return tot?on/tot:0;}
+function colProfile(mask,W,H){const c=new Array(W).fill(0);for(let x=0;x<W;x++)for(let y=0;y<H;y++)if(mask[y*W+x])c[x]++;return c;}
+function rowExtent(mask,W,H,x0,x1){let mn=H,mx=-1;for(let y=0;y<H;y++){let s=0;for(let x=x0;x<x1;x++)if(mask[y*W+x])s++;if(s>0){if(y<mn)mn=y;if(y>mx)mx=y;}}return[mn,mx];}
+function segmentGlyphs(mask,W,H){
+  const c=colProfile(mask,W,H),minOn=Math.max(1,Math.round(H*0.05)),runs=[];
+  let st=-1;
+  for(let x=0;x<=W;x++){const on=x<W&&c[x]>=minOn;if(on&&st<0)st=x;else if(!on&&st>=0){if(x-st>=2)runs.push([st,x]);st=-1;}}
+  // mescla runs muito próximos (segmentos quebrados do mesmo dígito)
+  const merged=[];for(const r of runs){if(merged.length&&r[0]-merged[merged.length-1][1]<=Math.max(2,H*0.04))merged[merged.length-1][1]=r[1];else merged.push(r.slice());}
+  const glyphs=merged.map(([x0,x1])=>{const[my,My]=rowExtent(mask,W,H,x0,x1);return{x0,x1,y0:my,y1:My,w:x1-x0,h:My-my+1,cy:(my+My)/2};}).filter(g=>g.h>0);
+  if(!glyphs.length)return [];
+  const Hmax=Math.max(...glyphs.map(g=>g.h));
+  return glyphs.filter(g=>g.h>=Hmax*0.4||g.w<=Hmax*0.55); // mantém dígitos e o ponto/“1”
+    
+}
+function classify(mask,W,H,g){
+  const{x0,y0,w,h}=g, gw=w, gh=h;
+  // ponto decimal: baixo e pequeno
+  if(gh<H*0.45&&gw<H*0.5&&g.cy>H*0.5)return{ch:'.',exact:true};
+  // “1”: estreito e alto
+  if(gw<=gh*0.42)return{ch:'1',exact:true};
+  const segs=[[0.50,0.11,0.46,0.20],[0.82,0.30,0.26,0.34],[0.82,0.71,0.26,0.34],[0.50,0.89,0.46,0.20],[0.18,0.71,0.26,0.34],[0.18,0.30,0.26,0.34],[0.50,0.50,0.46,0.22]];
+  let bits='';
+  for(const[cx,cy,sw,sh]of segs){
+    const bx=Math.round(x0+(cx-sw/2)*gw),by=Math.round(y0+(cy-sh/2)*gh);
+    const bw=Math.max(1,Math.round(sw*gw)),bh=Math.max(1,Math.round(sh*gh));
+    bits+=frac(mask,W,H,bx,by,bw,bh)>0.34?'1':'0';
+  }
+  if(SEG[bits])return{ch:SEG[bits],exact:true};
+  // tolerância: vizinho mais próximo (Hamming<=1)
+  let best=null,bd=99;
+  for(const k in SEG){let d=0;for(let i=0;i<7;i++)if(k[i]!==bits[i])d++;if(d<bd){bd=d;best=SEG[k];}}
+  return bd<=1?{ch:best,exact:false}:{ch:'?',exact:false};
+}
+function decodeSeg(){
+  const{mask,W,H}=buildMask();
+  const glyphs=segmentGlyphs(mask,W,H);
+  let text='',exacts=0,n=0;
+  for(const g of glyphs){const r=classify(mask,W,H,g);text+=r.ch;if(r.ch!=='.'){n++;if(r.exact)exacts++;}g.ch=r.ch;}
+  drawPreview(mask,W,H,glyphs);
+  const conf=n?Math.round(100*exacts/n):0;
+  return{text,conf};
+}
+function drawPreview(mask,W,H,glyphs){
+  proc.width=W;proc.height=H;const img=pctx.createImageData(W,H),d=img.data;
+  for(let j=0;j<mask.length;j++){const v=mask[j]?20:245;d[j*4]=d[j*4+1]=d[j*4+2]=v;d[j*4+3]=255;}
+  pctx.putImageData(img,0,0);
+  if(glyphs){pctx.strokeStyle='#FFB627';pctx.lineWidth=1;for(const g of glyphs)pctx.strokeRect(g.x0+.5,g.y0+.5,g.w-1,Math.max(1,g.h-1));}
+}
+
+/* ---------- OCR de texto geral (Tesseract) ---------- */
+async function ensureWorker(){
+  if(worker)return;
+  $('btnRead').textContent='Carregando OCR…';$('btnRead').disabled=true;log('carregando motor de texto…');
+  worker=await Tesseract.createWorker('eng');
+  await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:'7'});
+  log('OCR de texto pronto');$('btnRead').disabled=false;
+}
+async function decodeTess(){
+  const{mask,W,H}=buildMask();
+  // quiet zone branca + dígitos pretos (Tesseract gosta de margem)
+  const pad=14,cw=W+pad*2,ch=H+pad*2;proc.width=cw;proc.height=ch;
+  pctx.fillStyle='#fff';pctx.fillRect(0,0,cw,ch);
+  const img=pctx.getImageData(0,0,cw,ch),d=img.data;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(mask[y*W+x]){const j=((y+pad)*cw+(x+pad))*4;d[j]=d[j+1]=d[j+2]=20;}
+  pctx.putImageData(img,0,0);
+  const{data}=await worker.recognize(proc);
+  return{text:data.text,conf:data.confidence||0};
+}
+
+/* ---------- laço de leitura ---------- */
+async function toggleRead(){
+  if(reading){stopRead();return;}
+  if(!roi){alert('Marque primeiro a área dos dígitos arrastando sobre o display.');return;}
+  if(engine==='tess')await ensureWorker();
+  reading=true;hist=[];$('btnRead').textContent='Parar leitura';$('btnRead').classList.add('primary');loop();
+}
+function stopRead(){reading=false;$('btnRead').textContent='Iniciar leitura';$('btnRead').classList.remove('primary');$('value').classList.add('stale');}
 async function loop(){
   while(reading){
     try{
-      const canvas=preprocess();
       $('scan').classList.add('active');
-      const {data}=await worker.recognize(canvas);
+      const res=engine==='seg'?decodeSeg():await decodeTess();
       $('scan').classList.remove('active');
-      handleResult(data.text,data.confidence);
+      handleResult(res.text,res.conf);
     }catch(e){log('falha na leitura: '+e.message);}
-    const now=performance.now(),dt=now-lastCycle;lastCycle=now;
-    $('fps').textContent=(1000/dt).toFixed(1)+'/s';
-    await new Promise(r=>setTimeout(r,120)); // respira entre leituras
+    const now=performance.now(),dt=now-lastCycle;lastCycle=now;$('fps').textContent=(1000/dt).toFixed(1)+'/s';
+    await new Promise(r=>setTimeout(r,engine==='seg'?90:140));
   }
 }
 
@@ -278,15 +331,17 @@ function handleResult(text,conf){
   const raw=(text||'').trim().replace(/\s+/g,'');
   $('raw').textContent='leitura bruta: '+(raw||'—');
   $('conf').textContent=conf?Math.round(conf)+'%':'—';
-  let clean=raw.replace(/[^0-9.]/g,''); const parts=clean.split('.');
+  let clean=raw.replace(/[^0-9.]/g,'');const parts=clean.split('.');
   if(parts.length>2)clean=parts[0]+'.'+parts.slice(1).join('');
-  const val=parseFloat(clean);
-  const maxv=+$('maxv').value, ok=!isNaN(val)&&val>=0&&val<=maxv&&conf>=40;
-  if(ok){
-    lastGood=val;
-    $('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';
-    $('value').classList.remove('stale');
-    send(val);
+  const val=parseFloat(clean),maxv=+$('maxv').value;
+  const plausible=!isNaN(val)&&val>=0&&val<=maxv&&conf>=50;
+  // estabilização: confirma se repetiu na última leitura
+  hist.push(plausible?val:null);if(hist.length>3)hist.shift();
+  const stable=plausible&&hist.filter(v=>v!==null&&Math.abs(v-val)<0.15).length>=2;
+  if(stable){
+    lastGood=val;$('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';$('value').classList.remove('stale');send(val);
+  }else if(plausible){
+    $('value').innerHTML=val.toFixed(1)+'<span class="unit">km/h</span>';$('value').classList.add('stale');
   }else{
     $('value').classList.add('stale');
   }
@@ -295,29 +350,25 @@ function handleResult(text,conf){
 /* ---------- WebSocket ---------- */
 function toggleWs(){
   if(ws){ws.close();return;}
-  const url=$('wsUrl').value.trim();
-  if(!url){alert('Informe o endereço do servidor (ws://…)');return;}
+  const url=$('wsUrl').value.trim();if(!url){alert('Informe o endereço do servidor (ws://…)');return;}
   try{
-    ws=new WebSocket(url);
-    $('wsStatus').textContent='conectando…';
+    ws=new WebSocket(url);$('wsStatus').textContent='conectando…';
     ws.onopen=()=>{$('wsDot').classList.add('on');$('wsStatus').textContent='conectado';$('btnWs').textContent='Desconectar';$('btnWsTest').disabled=false;log('WS conectado a '+url);};
     ws.onclose=()=>{$('wsDot').classList.remove('on');$('wsStatus').textContent='desconectado';$('btnWs').textContent='Conectar';$('btnWsTest').disabled=true;ws=null;log('WS desconectado');};
-    ws.onerror=()=>{log('WS: erro de conexão');};
+    ws.onerror=()=>log('WS: erro de conexão');
   }catch(e){alert('Endereço inválido: '+e.message);}
 }
-function send(v){
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'speed',value:v,unit:'kmh',ts:Date.now()}));
-}
+function send(v){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'speed',value:v,unit:'kmh',ts:Date.now()}));}
 $('btnWsTest').onclick=()=>{const v=lastGood??15;send(v);log('teste enviado: '+v+' km/h');};
 
-/* ---------- controles dos sliders ---------- */
+/* ---------- controles ---------- */
+function setEngine(e){engine=e;$('engSeg').classList.toggle('active',e==='seg');$('engTess').classList.toggle('active',e==='tess');log('motor: '+(e==='seg'?'7 segmentos':'texto geral'));}
+$('engSeg').onclick=()=>setEngine('seg');
+$('engTess').onclick=()=>setEngine('tess');
 $('thresh').oninput=e=>$('threshVal').textContent=e.target.value;
 $('thresh').addEventListener('dblclick',()=>$('threshVal').textContent='auto');
 $('maxv').oninput=e=>$('maxvVal').textContent=e.target.value;
-
-$('btnCam').onclick=toggleCam;
-$('btnRead').onclick=toggleRead;
-$('btnWs').onclick=toggleWs;
+$('btnCam').onclick=toggleCam;$('btnRead').onclick=toggleRead;$('btnWs').onclick=toggleWs;
 log('pronto. ligue a câmera para começar.');
 </script>
 </body>
